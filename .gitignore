@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Model weights (large, shouldn't be in git)
+*.gguf
+models/
+
+# Data/logs generated during runs
+traffic_log*.jsonl
+traffic_output.log
+features.csv
+*.joblib
+
+# OS
+.DS_Store
+*.bak
+vllm/
