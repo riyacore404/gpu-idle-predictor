@@ -2,8 +2,9 @@ import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import sys
 
-LOG_FILE = "traffic_log.jsonl"
+LOG_FILE = sys.argv[1] if len(sys.argv) > 1 else "traffic_log_incluster_full.jsonl"
 OUTPUT_FILE = "features.csv"
 WINDOW_SECONDS = 30
 SESSION_GAP_THRESHOLD_SECONDS = 600  # gaps over 10 min = new session, not real idle signal

@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: traffic-generator
+  namespace: inference
+spec:
+  restartPolicy: OnFailure
+  containers:
+    - name: generator
+      image: python:3.9-slim
+      env:
+        - name: DURATION_SECONDS
+          value: "DURATION_PLACEHOLDER"  # replaced by run_collection.sh before apply.
+          # If applied manually (not via run_collection.sh), any non-numeric value
+          # here (including this placeholder) makes the script run forever — safe default.
+      command:
+        - "sh"
+        - "-c"
+        - |
+          for i in 1 2 3 4 5; do
+            pip install requests --quiet --root-user-action=ignore --timeout 60 && break
+            echo "pip install failed, retry $i/5..."
+            sleep 5
+          done
+          python /scripts/generate_traffic_incluster.py
+      volumeMounts:
+        - name: script-volume
+          mountPath: /scripts
+  volumes:
+    - name: script-volume
+      configMap:
+        name: traffic-generator-script

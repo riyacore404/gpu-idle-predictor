@@ -17,3 +17,7 @@ features.csv
 .DS_Store
 *.bak
 vllm/
+*.jsonl
+*.stderr.log
+features.csv
+idle_risk_model.joblib
