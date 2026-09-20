@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idle-risk-exporter
+  namespace: inference
+  labels:
+    app: idle-risk-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: idle-risk-exporter
+  template:
+    metadata:
+      labels:
+        app: idle-risk-exporter
+    spec:
+      containers:
+        - name: exporter
+          image: python:3.9-slim
+          command:
+            - "sh"
+            - "-c"
+            - |
+              pip install --quiet --root-user-action=ignore flask requests prometheus_client joblib pandas numpy scikit-learn
+              python /app/idle_risk_exporter.py
+          env:
+            - name: LLAMA_CPP_URL
+              value: "http://llama-cpu.inference.svc.cluster.local:8080"
+            - name: PORT
+              value: "8090"
+            - name: MODEL_PATH
+              value: "/app/idle_risk_model.joblib"
+          ports:
+            - containerPort: 8090
+              name: http
+          volumeMounts:
+            - name: exporter-code
+              mountPath: /app
+      volumes:
+        - name: exporter-code
+          configMap:
+            name: idle-risk-exporter-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idle-risk-exporter
+  namespace: inference
+  labels:
+    app: idle-risk-exporter
+spec:
+  selector:
+    app: idle-risk-exporter
+  ports:
+    - name: http
+      port: 8090
+      targetPort: 8090
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: idle-risk-exporter
+  namespace: inference
+spec:
+  selector:
+    matchLabels:
+      app: idle-risk-exporter
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

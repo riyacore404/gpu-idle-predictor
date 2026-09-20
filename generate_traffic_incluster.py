@@ -5,7 +5,7 @@ import random
 import json
 from datetime import datetime
 
-SERVER_URL = "http://llama-cpu.inference.svc.cluster.local:8080/v1/chat/completions"
+SERVER_URL = "http://idle-risk-exporter.inference.svc.cluster.local:8090/v1/chat/completions"
 
 PROMPTS = [
     "Explain how a hash table works.",
