@@ -10,7 +10,7 @@ This project is a first pass at that predictive layer: given real traffic signal
 
 ## Current status
 
-Local dev, baseline model converged, and a live Prometheus exporter is running and verified. The full pipeline runs end to end locally:
+Local dev, baseline model converged, and a live Prometheus exporter has been built and verified end-to-end. The full pipeline runs end to end locally:
 
 **Inference → Metrics/proxy → Feature extraction → Model → Prometheus (`gpu_idle_risk_score`)**
 
@@ -156,7 +156,11 @@ Ground truth for "idle" is the traffic log's own request timeline (real inter-re
 
 **Feature importance caveat**, consistent across v4 and v5: `total_tokens` (current-window activity) is the dominant feature (importance ~0.35–0.5), ahead of the rolling-trend features. The model is substantially learning "current activity predicts near-future activity" rather than detecting subtler idle-trending signals — an honest limitation to state up front, not something the AUC number alone conveys.
 
-**Live exporter verification:** deployed as a reverse-proxy Prometheus exporter (`idle_risk_exporter.py`) computing the same rolling-window features as training in real time. Observed `gpu_idle_risk_score` measure **0.003 during active (`moderate` regime) traffic**, then rise to **0.999 within one 30s window of a transition into a `quiet` regime** — confirming the live feature pipeline reproduces training-time behavior, not just that the model loads and runs.
+**Live exporter verification:** deployed as a reverse-proxy Prometheus exporter (`idle_risk_exporter.py`) computing the same rolling-window features as training in real time. Verified twice, independently, on two separately-built clusters:
+- Run 1: `gpu_idle_risk_score` measured **0.003 during active (`moderate` regime) traffic**, then rose to **0.999 within one 30s window of a transition into a `quiet` regime**.
+- Run 2 (full clean-cluster rebuild — see Setup — including a re-download of the model file and a from-scratch cluster): `gpu_idle_risk_score` measured **0.001–0.003 during active traffic**, then rose to **0.98–0.99** during a subsequent quiet stretch.
+
+Both runs show the same transition pattern, confirming the live feature pipeline reproduces training-time behavior on infrastructure built from scratch, not just on a long-lived dev cluster carrying manual setup history.
 
 ## Known limitations
 
