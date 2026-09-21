@@ -1,12 +1,14 @@
 # gpu-idle-predictor
 
-A predictor for idle and oversized GPU allocation on Kubernetes-hosted LLM inference workloads — the layer OpenCost's own maintainers named as a still-open gap after shipping per-token inference cost tracking in [OpenCost v1.121.0](https://github.com/opencost/opencost) (Aug 2026).
+An early research prototype exploring whether short-term LLM inference traffic patterns can predict near-term request inactivity on Kubernetes — a first, narrower step toward the bigger open problem OpenCost's own maintainers named after shipping per-token inference cost tracking in [OpenCost v1.121.0](https://github.com/opencost/opencost) (Aug 2026): idle/oversized GPU allocation detection.
+
+**What this predicts today:** given the last few 30-second windows of request activity, will the *next* 60-second window have zero requests? That's a real, evaluated prediction task (see [Evaluation results](#evaluation-results)) — but it is not yet a GPU-idleness or rightsizing predictor. It doesn't observe GPU utilization, KV-cache pressure, or batching state, and it hasn't been connected to OpenCost's actual cost data. Closing that gap — from "will requests stop" to "is this GPU allocation economically wasteful" — is the open problem this project is a first step toward, not something it currently solves. See [Known limitations](#known-limitations) for the full list of what's real versus what's still ahead.
 
 ## The problem
 
 OpenCost can now tell you what an LLM inference token *already cost*. It can't yet tell you when a GPU allocation is *about to become* idle or oversized — before the next billing cycle confirms it. CPU/memory autoscaling has a mature answer to this (Vertical Pod Autoscaler), but GPU idle risk for LLM serving doesn't follow the same shape: it's driven by batching gaps, KV-cache churn, and bursty request patterns that don't look like a steady CPU load curve.
 
-This project is a first pass at that predictive layer: given real traffic signals (token throughput, request burstiness, inter-request gaps), predict whether a GPU allocation is trending toward idle *before* it happens.
+This project is a first pass at *part of* that predictive layer: given real traffic signals (token throughput, request burstiness, inter-request gaps), predict whether request activity is trending toward a quiet period *before* it happens. Whether that traffic-based signal is actually a good proxy for GPU underutilization — rather than just workload demand — is an open question this prototype surfaces but does not yet answer.
 
 ## Current status
 
@@ -14,7 +16,7 @@ Local dev, baseline model converged, and a live Prometheus exporter has been bui
 
 **Inference → Metrics/proxy → Feature extraction → Model → Prometheus (`gpu_idle_risk_score`)**
 
-The baseline (gradient-boosted trees on rolling-window traffic features) went through several rounds of debugging before producing a trustworthy result — documented in full in [Evaluation results](#evaluation-results) below. Two independent ~2–2.5 hour data collection runs converge on **ROC-AUC ≈ 0.68–0.70** with tight cross-validation variance (std 0.025–0.043), treated as the model's stable ceiling on this feature set. That model is now wrapped in a live exporter (`idle_risk_exporter.py`) that serves real-time idle-risk predictions as a Prometheus gauge, verified end-to-end against live traffic — see Evaluation results for the observed score transition.
+The baseline (gradient-boosted trees on rolling-window traffic features) went through several rounds of debugging before producing a trustworthy result — documented in full in [Evaluation results](#evaluation-results) below. Two independent ~2–2.5 hour data collection runs converge on **ROC-AUC ≈ 0.68–0.70** with tight cross-validation variance (std 0.025–0.043) — suggesting a provisional performance ceiling for this feature set under the current synthetic traffic-generation process, though not yet a broadly validated one (see caveats below). That model is now wrapped in a live exporter (`idle_risk_exporter.py`) that serves real-time predictions as a Prometheus gauge, verified end-to-end against live traffic — see Evaluation results for the observed score transition.
 
 ## Architecture (local dev)
 
@@ -152,9 +154,13 @@ Ground truth for "idle" is the traffic log's own request timeline (real inter-re
 **Reading this progression honestly, in order of what it shows:**
 - v1 → v2: a model needs real temporal structure to learn from. Independent random bursts gave the classifier nothing to key on; switching to persistent quiet/moderate/busy regimes fixed that immediately.
 - v2/v3 → v4: high cross-validation variance (std 0.175–0.203) on v2/v3 was a data-volume and fragmentation problem, not a broken model — confirmed by v4's single continuous, unfragmented session dropping std to 0.043 without changing the underlying approach.
-- v4 → v5: an independently collected session, run separately from v4, converged to the same ROC-AUC range (0.68–0.70) with comparably tight variance. Two independent datasets agreeing is stronger evidence of a stable ceiling than either result alone.
+- v4 → v5: an independently collected session, run separately from v4, converged to the same ROC-AUC range (0.68–0.70) with comparably tight variance. Two independent datasets agreeing is stronger evidence of a provisional ceiling than either result alone — but both were generated by the same regime-based synthetic process, so this is not yet evidence the ceiling holds on real production traffic (see caveat below).
 
 **Feature importance caveat**, consistent across v4 and v5: `total_tokens` (current-window activity) is the dominant feature (importance ~0.35–0.5), ahead of the rolling-trend features. The model is substantially learning "current activity predicts near-future activity" rather than detecting subtler idle-trending signals — an honest limitation to state up front, not something the AUC number alone conveys.
+
+**Synthetic traffic caveat:** the regime-based generator deliberately creates temporal persistence (quiet/moderate/busy states held for 3–6 cycles), which is exactly the kind of structure a rolling-window model can exploit. The 0.68–0.70 result establishes that the model can extract signal from *this generated process* — it does not establish that the same signal exists in real production LLM traffic, which may have very different persistence characteristics. Real validation requires real traffic (see Known limitations).
+
+**Baseline comparison:** `baseline_comparison.py` checks the trained model against simple non-ML heuristics (e.g. "current window has zero requests," "tokens/sec below a threshold") on the same held-out data, to establish whether the gradient-boosted model earns its complexity. See the script's own output for current numbers — added specifically so this claim isn't asserted without a comparison point.
 
 **Live exporter verification:** deployed as a reverse-proxy Prometheus exporter (`idle_risk_exporter.py`) computing the same rolling-window features as training in real time. Verified twice, independently, on two separately-built clusters:
 - Run 1: `gpu_idle_risk_score` measured **0.003 during active (`moderate` regime) traffic**, then rose to **0.999 within one 30s window of a transition into a `quiet` regime**.
@@ -164,11 +170,14 @@ Both runs show the same transition pattern, confirming the live feature pipeline
 
 ## Known limitations
 
+- The model predicts near-term request inactivity, not GPU idleness directly — it does not observe GPU utilization, memory pressure, KV-cache occupancy, or batching/concurrency state. Traffic volume and actual GPU underutilization are correlated but not equivalent, especially given that identical request rates can produce very different GPU load depending on sequence length, batching, and concurrency.
+- OpenCost is deployed alongside this pipeline for cost-allocation context, but its cost data is not yet part of the model's prediction target — the connection from "predicted inactivity" to "economic waste" is not yet established or evaluated.
 - Local dev traffic is synthetic (regime-based, not real production LLM traffic) — real validation requires a real vLLM/llm-d deployment with genuine user traffic.
 - GPU cost is simulated via Fake GPU Operator + manually-set pricing; no real GPU billing was observed.
 - The model is substantially driven by current-window activity (`total_tokens`) rather than subtler rolling-trend signals — see Evaluation results.
-- All evaluation to date is on synthetic single-session data at the 30–150 minute scale; the model has not been validated on multi-day or multi-tenant traffic patterns.
+- All evaluation to date is on synthetic single-session data at the 30–150 minute scale, generated by a regime-based process that creates the kind of temporal persistence a rolling-window model can exploit; the model has not been validated on multi-day, multi-tenant, or real-world traffic patterns.
 - The exporter's reverse-proxy design (rather than direct Prometheus querying) is specific to llama.cpp's metrics gap for local dev — a production exporter against vLLM would query Prometheus directly using vLLM's native per-request latency histograms, no proxy required.
+- The exporter is a single-replica, in-memory-state local-dev deployment (runtime `pip install`, no pinned image, no persistence across restarts) — appropriate for demonstrating the pipeline, not representative of a production deployment.
 
 ## License
 
