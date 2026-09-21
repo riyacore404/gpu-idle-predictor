@@ -2,7 +2,7 @@
 
 An early research prototype exploring whether short-term LLM inference traffic patterns can predict near-term request inactivity on Kubernetes — a first, narrower step toward the bigger open problem OpenCost's own maintainers named after shipping per-token inference cost tracking in [OpenCost v1.121.0](https://github.com/opencost/opencost) (Aug 2026): idle/oversized GPU allocation detection.
 
-**What this predicts today:** given the last few 30-second windows of request activity, will the *next* 60-second window have zero requests? That's a real, evaluated prediction task (see [Evaluation results](#evaluation-results)) — but it is not yet a GPU-idleness or rightsizing predictor. It doesn't observe GPU utilization, KV-cache pressure, or batching state, and it hasn't been connected to OpenCost's actual cost data. Closing that gap — from "will requests stop" to "is this GPU allocation economically wasteful" — is the open problem this project is a first step toward, not something it currently solves. See [Known limitations](#known-limitations) for the full list of what's real versus what's still ahead.
+**What this predicts today:** given the last few 30-second windows of request activity, will the *next* 60-second window have zero requests? That's a real, evaluated prediction task (see [Evaluation results](#evaluation-results)) — and a real-CPU validation (see below) shows this traffic-based signal does correspond to measurably lower actual CPU usage, not just fewer logged requests. But it is not yet a GPU-idleness or rightsizing predictor: it doesn't observe GPU utilization, KV-cache pressure, or batching state directly, and it hasn't been connected to OpenCost's actual cost data. Closing the remaining gap — from "predicts lower resource usage" to "predicts economically wasteful GPU allocation" — is the open problem this project is a step toward, not something it fully solves yet. See [Known limitations](#known-limitations) for the full list of what's real versus what's still ahead.
 
 ## The problem
 
@@ -178,9 +178,20 @@ The model clearly outperforms every simple heuristic (+0.182 over the best basel
 
 Both runs show the same transition pattern, confirming the live feature pipeline reproduces training-time behavior on infrastructure built from scratch, not just on a long-lived dev cluster carrying manual setup history.
 
+**Real resource validation (not simulated):** the biggest open question both this project's own limitations and external review raised was whether traffic-based idle labels track anything real, or just request volume for its own sake. To check, `correlate_real_cpu.py` joins the traffic-based `is_idle_window` label against **real cAdvisor CPU utilization** for the llama-cpu container (`container_cpu_usage_seconds_total`, scraped by kube-prometheus-stack — genuine telemetry, not the simulated GPU/cost data used elsewhere in this project) over a 40-minute collection run (182 requests, 69 feature windows):
+
+| | n | Real CPU (median, fraction of one core) |
+|---|---|---|
+| Traffic-idle windows | 22 | 0.172 |
+| Traffic-active windows | 47 | 1.261 |
+
+Mann-Whitney U test: **p = 0.0002** (traffic-active windows show significantly higher real CPU usage than traffic-idle windows). Correlation between `total_tokens` and real CPU fraction: **r = 0.601**.
+
+This is a genuine, if partial, validation: on this CPU-bound inference workload, the traffic-based idle signal does correspond to measurably lower real resource usage, not just fewer logged requests. Scope of the claim, stated precisely: this validates **CPU idleness**, not GPU idleness (no real GPU was available to measure) — for a CPU-bound llama.cpp server, CPU is a meaningful compute-idleness proxy, but the eventual production target (vLLM + real GPU) would need the equivalent check against real GPU utilization, which this setup cannot provide. An earlier, smaller run (27 windows) showed the same direction (active-window CPU median 0.824 vs. idle-window median 0.0004) but did not reach significance (p = 0.076) — consistent with a real but noisy effect that needed more data to resolve cleanly, the same pattern seen in the model's own evaluation progression (v2/v3 → v4).
+
 ## Known limitations
 
-- The model predicts near-term request inactivity, not GPU idleness directly — it does not observe GPU utilization, memory pressure, KV-cache occupancy, or batching/concurrency state. Traffic volume and actual GPU underutilization are correlated but not equivalent, especially given that identical request rates can produce very different GPU load depending on sequence length, batching, and concurrency.
+- The model predicts near-term request inactivity, not GPU idleness directly — it does not observe GPU utilization, memory pressure, KV-cache occupancy, or batching/concurrency state. A real-CPU validation (see Evaluation results) shows the traffic signal does track actual CPU idleness on this workload, but CPU is not GPU, and identical request rates can still produce very different GPU load depending on sequence length, batching, and concurrency.
 - OpenCost is deployed alongside this pipeline for cost-allocation context, but its cost data is not yet part of the model's prediction target — the connection from "predicted inactivity" to "economic waste" is not yet established or evaluated.
 - Local dev traffic is synthetic (regime-based, not real production LLM traffic) — real validation requires a real vLLM/llm-d deployment with genuine user traffic.
 - GPU cost is simulated via Fake GPU Operator + manually-set pricing; no real GPU billing was observed.
