@@ -46,31 +46,50 @@ This project targets **vLLM + llm-d** in production (the same stack OpenCost's r
 Requires: Docker, `kind`, `kubectl`, `helm`, Python 3.9+.
 
 ```bash
-# 1. Create cluster
+# 1. Model file — any TinyLlama-1.1B-Chat GGUF quantization works; tested with
+#    TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF (Q4_0).
+mkdir -p models
+curl -L https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_0.gguf \
+  -o models/tinyllama.gguf
+
+# 2. Create cluster
 kind create cluster --name gpu-idle-predictor
 
-# 2. Prometheus
+# 3. Copy the model into the node directly (NOT a host bind-mount/extraMounts —
+#    on macOS + Docker Desktop, bind-mounted files can fail to open inside the
+#    container with "Operation not permitted", caused by the com.apple.provenance
+#    extended attribute macOS attaches to downloaded files not surviving the
+#    virtiofs boundary cleanly. Copying the file directly into the node's own
+#    filesystem avoids this entirely.)
+docker exec gpu-idle-predictor-control-plane mkdir -p /models
+docker cp models/tinyllama.gguf gpu-idle-predictor-control-plane:/models/tinyllama.gguf
+
+# 4. Prometheus
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace
 
-# 3. Inference server (see vllm-deployment.yaml)
+# 5. Inference server (see vllm-deployment.yaml)
 kubectl create namespace inference
 kubectl apply -f vllm-deployment.yaml
 kubectl apply -f llama-servicemonitor.yaml
+# Note: this must come after step 4 — the ServiceMonitor CRD only exists once
+# the Prometheus Operator is installed.
 
-# 4. Fake GPU operator (for GPU cost simulation)
+# 6. Fake GPU operator (for GPU cost simulation)
 kubectl create namespace gpu-operator
 kubectl label ns gpu-operator pod-security.kubernetes.io/enforce=privileged
 helm upgrade -i fake-gpu-operator oci://ghcr.io/run-ai/fake-gpu-operator/fake-gpu-operator \
   --namespace gpu-operator --set topology.nodePools.default.gpuCount=1
 kubectl label node gpu-idle-predictor-control-plane run.ai/simulated-gpu-node-pool=default
 
-# 5. OpenCost (see opencost-values.yaml — points at the Prometheus service above)
+# 7. OpenCost (see opencost-values.yaml — points at the Prometheus service above)
 helm repo add opencost https://opencost.github.io/opencost-helm-chart
 helm upgrade -i opencost opencost/opencost --namespace opencost --create-namespace \
   -f opencost-values.yaml
 ```
+
+If the model file needs to be re-copied after recreating the cluster (e.g. `kind delete cluster` + `kind create cluster`), just repeat step 3 — the node's `/models` directory does not persist across cluster recreation.
 
 Port-forwards for local access: see `start-ports.sh`.
 

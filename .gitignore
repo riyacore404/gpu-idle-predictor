@@ -21,3 +21,4 @@ vllm/
 *.stderr.log
 features.csv
 idle_risk_model.joblib
+models/
