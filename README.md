@@ -160,7 +160,17 @@ Ground truth for "idle" is the traffic log's own request timeline (real inter-re
 
 **Synthetic traffic caveat:** the regime-based generator deliberately creates temporal persistence (quiet/moderate/busy states held for 3–6 cycles), which is exactly the kind of structure a rolling-window model can exploit. The 0.68–0.70 result establishes that the model can extract signal from *this generated process* — it does not establish that the same signal exists in real production LLM traffic, which may have very different persistence characteristics. Real validation requires real traffic (see Known limitations).
 
-**Baseline comparison:** `baseline_comparison.py` checks the trained model against simple non-ML heuristics (e.g. "current window has zero requests," "tokens/sec below a threshold") on the same held-out data, to establish whether the gradient-boosted model earns its complexity. See the script's own output for current numbers — added specifically so this claim isn't asserted without a comparison point.
+**Baseline comparison:** on the same held-out test split used for the v5 evaluation above, `baseline_comparison.py` checks the trained model against simple non-ML heuristics:
+
+| Approach | ROC-AUC |
+|---|---|
+| Gradient-boosted model (trained) | **0.758** |
+| `rolling_request_count_mean` below training median | 0.576 |
+| Current window has zero requests | 0.530 |
+| Current `tokens_per_second` below training median | 0.530 |
+| No-signal / coin-flip reference | 0.500 |
+
+The model clearly outperforms every simple heuristic (+0.182 over the best baseline), and the near-coin-flip performance of the naive "is it quiet right now" heuristics suggests the rolling-window features are doing real work, not just encoding a trivially-checkable pattern. This comparison used the smaller v5 dataset (67 rows); re-running it against a larger future collection would be a natural next check.
 
 **Live exporter verification:** deployed as a reverse-proxy Prometheus exporter (`idle_risk_exporter.py`) computing the same rolling-window features as training in real time. Verified twice, independently, on two separately-built clusters:
 - Run 1: `gpu_idle_risk_score` measured **0.003 during active (`moderate` regime) traffic**, then rose to **0.999 within one 30s window of a transition into a `quiet` regime**.
