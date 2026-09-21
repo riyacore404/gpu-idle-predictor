@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import classification_report, precision_recall_curve, roc_auc_score
+from model_metadata import write_model_metadata
 import joblib
 
 FEATURES_FILE = "features.csv"
@@ -103,6 +104,18 @@ def main():
         print(f"  {name}: {importance:.3f}")
 
     joblib.dump(model, MODEL_OUTPUT)
+
+    write_model_metadata(
+        output_path="idle_risk_model_metadata.json",
+        feature_cols=feature_cols,
+        prediction_horizon_windows=PREDICTION_HORIZON_WINDOWS,
+        window_seconds=30,
+        rolling_windows=3,
+        train_rows=len(X_train),
+        test_rows=len(X_test),
+        dataset_file=FEATURES_FILE,
+    )
+
     print(f"\nModel saved to {MODEL_OUTPUT}")
 
 if __name__ == "__main__":

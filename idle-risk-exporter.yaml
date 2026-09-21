@@ -22,7 +22,7 @@ spec:
             - "sh"
             - "-c"
             - |
-              pip install --quiet --root-user-action=ignore flask requests prometheus_client joblib pandas numpy scikit-learn
+              pip install --quiet --root-user-action=ignore -r /app/requirements-exporter.txt
               python /app/idle_risk_exporter.py
           env:
             - name: LLAMA_CPP_URL

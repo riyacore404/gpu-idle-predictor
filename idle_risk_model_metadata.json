@@ -1,0 +1,29 @@
+{
+  "written_at_utc": "2026-09-21T20:06:56.065989+00:00",
+  "feature_schema": {
+    "features_in_order": [
+      "request_count",
+      "total_tokens",
+      "tokens_per_second",
+      "mean_latency_seconds",
+      "rolling_request_count_mean",
+      "rolling_request_count_std",
+      "rolling_tokens_per_second_mean"
+    ],
+    "window_seconds": 30,
+    "rolling_windows": 3,
+    "prediction_horizon_windows": 2
+  },
+  "training_data": {
+    "source_file": "features.csv",
+    "train_rows": 53,
+    "test_rows": 14
+  },
+  "environment": {
+    "python_version": "3.9.6",
+    "platform": "macOS-14.8.7-arm64-arm-64bit",
+    "scikit_learn_version": "1.6.1",
+    "numpy_version": "2.0.2",
+    "pandas_version": "2.3.3"
+  }
+}
